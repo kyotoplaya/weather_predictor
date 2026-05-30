@@ -27,7 +27,8 @@ static bool bmp_read_calibration(BMP180Calibration* c);
 static bool bmp_read_raw_temperature(int32_t* ut);
 static bool bmp_read_raw_pressure(int32_t* up);
 static int32_t bmp_calculate_b5(int32_t ut, const BMP180Calibration* c);
-` bool bmp180_init(void) {
+
+bool bmp180_init(void) {
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_external);
 
     bool ok = bmp_read_calibration(&calib);
