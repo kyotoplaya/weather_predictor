@@ -1,21 +1,42 @@
 #include <furi.h>
-#include <gui/gui.h>
-#include <input/input.h>
+#include <furi_hal.h>
 #include <furi_hal_rtc.h>
+
+#include <gui/gui.h>
+#include <gui/view.h>
+#include <gui/view_dispatcher.h>
 
 #include "bmp180/bmp180.h"
 
-// Базовая структура состояния приложения
+#define TAG "Predictor"
+
+typedef enum {
+    PredictorViewMain,
+} PredictorView;
+
+typedef enum {
+    PredictorEventRedraw = 0,
+} PredictorEvent;
+
 typedef struct {
-    int32_t T;
-    int32_t P;
-} AppState;
+    ViewDispatcher* view_dispatcher;
+    View* main_view;
+    FuriTimer* timer;
+} PredictorApp;
 
-// Функция отрисовки
-static void draw_callback(Canvas* canvas, void* ctx) {
-    AppState* app = ctx;
+typedef struct {
+    int32_t temperature;
+    int32_t pressure;
+} PredictorModel;
 
-    // Структура даты-времени
+static uint32_t predictor_exit_navigation_callback(void* context) {
+    UNUSED(context);
+    return VIEW_NONE;
+}
+
+static void predictor_draw_callback(Canvas* canvas, void* model) {
+    PredictorModel* m = model;
+
     DateTime dt;
     furi_hal_rtc_get_datetime(&dt);
 
@@ -29,68 +50,128 @@ static void draw_callback(Canvas* canvas, void* ctx) {
 
     canvas_set_font(canvas, FontPrimary);
 
-    snprintf(buf, sizeof(buf), "T: %ld.%ld C", app->T / 10, app->T % 10);
-    canvas_draw_str(canvas, 5, 40, buf);
+    snprintf(buf, sizeof(buf), "T: %ld.%ld C", m->temperature / 10, labs(m->temperature % 10));
+    canvas_draw_str(canvas, 5, 42, buf);
 
-    snprintf(buf, sizeof(buf), "P: %ld Pa", app->P);
-    canvas_draw_str(canvas, 5, 55, buf);
+    snprintf(buf, sizeof(buf), "P: %ld Pa", m->pressure);
+    canvas_draw_str(canvas, 5, 56, buf);
 }
 
-// Колбэк кнопок
-static void input_callback(InputEvent* event, void* ctx) {
-    FuriMessageQueue* queue = ctx;
-    furi_message_queue_put(queue, event, FuriWaitForever);
+static void predictor_timer_callback(void* context) {
+    PredictorApp* app = context;
+
+    view_dispatcher_send_custom_event(app->view_dispatcher, PredictorEventRedraw);
+}
+
+static void predictor_enter_callback(void* context) {
+    PredictorApp* app = context;
+
+    furi_assert(app->timer == NULL);
+
+    app->timer = furi_timer_alloc(predictor_timer_callback, FuriTimerTypePeriodic, app);
+
+    furi_timer_start(app->timer,
+                     furi_ms_to_ticks(60000)); // 1 минута
+}
+
+static void predictor_exit_callback(void* context) {
+    PredictorApp* app = context;
+
+    if(app->timer) {
+        furi_timer_stop(app->timer);
+        furi_timer_free(app->timer);
+        app->timer = NULL;
+    }
+}
+
+static bool predictor_custom_event_callback(uint32_t event, void* context) {
+    PredictorApp* app = context;
+
+    switch(event) {
+    case PredictorEventRedraw:
+        with_view_model(
+            app->main_view,
+            PredictorModel * model,
+            {
+                model->temperature = get_temperature();
+                model->pressure = get_pressure();
+            },
+            true);
+
+        return true;
+
+    default:
+        return false;
+    }
+}
+
+static PredictorApp* predictor_app_alloc(void) {
+    PredictorApp* app = calloc(1, sizeof(PredictorApp));
+
+    Gui* gui = furi_record_open(RECORD_GUI);
+
+    if(!bmp180_init()) {
+        FURI_LOG_E(TAG, "BMP180 init failed");
+    }
+
+    app->view_dispatcher = view_dispatcher_alloc();
+
+    view_dispatcher_attach_to_gui(app->view_dispatcher, gui, ViewDispatcherTypeFullscreen);
+
+    view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
+
+    app->main_view = view_alloc();
+
+    view_set_context(app->main_view, app);
+
+    view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(PredictorModel));
+
+    with_view_model(
+        app->main_view,
+        PredictorModel * model,
+        {
+            model->temperature = get_temperature();
+            model->pressure = get_pressure();
+        },
+        false);
+
+    view_set_draw_callback(app->main_view, predictor_draw_callback);
+
+    view_set_enter_callback(app->main_view, predictor_enter_callback);
+
+    view_set_exit_callback(app->main_view, predictor_exit_callback);
+
+    view_set_previous_callback(app->main_view, predictor_exit_navigation_callback);
+
+    view_set_custom_callback(app->main_view, predictor_custom_event_callback);
+
+    view_dispatcher_add_view(app->view_dispatcher, PredictorViewMain, app->main_view);
+
+    view_dispatcher_switch_to_view(app->view_dispatcher, PredictorViewMain);
+
+    return app;
+}
+
+static void predictor_app_free(PredictorApp* app) {
+    view_dispatcher_remove_view(app->view_dispatcher, PredictorViewMain);
+
+    view_free(app->main_view);
+
+    view_dispatcher_free(app->view_dispatcher);
+
+    furi_record_close(RECORD_GUI);
+
+    free(app);
 }
 
 int32_t predictor_app(void* p) {
     UNUSED(p);
 
-    AppState* app = malloc(sizeof(AppState));
+    PredictorApp* app = predictor_app_alloc();
 
-    app->T = 0;
-    app->P = 0;
+    view_dispatcher_run(app->view_dispatcher);
 
-    if(!bmp180_init()) {
-        FURI_LOG_E("BMP", "init failed");
-    }
-
-    // Инициализации viewport
-    FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
-
-    ViewPort* view_port = view_port_alloc();
-
-    view_port_draw_callback_set(view_port, draw_callback, app);
-    view_port_input_callback_set(view_port, input_callback, queue);
-
-    // API GUI и привязка к нему view_port
-    Gui* gui = furi_record_open(RECORD_GUI);
-    gui_add_view_port(gui, view_port, GuiLayerFullscreen);
-
-    InputEvent event;
-    bool running = true;
-
-    while(running) {
-        if(furi_message_queue_get(queue, &event, FuriWaitForever) == FuriStatusOk) {
-            if(event.key == InputKeyBack) {
-                running = false;
-            }
-            // тут ты обновляешь датчики
-            app->T = get_temperature();
-            app->P = get_pressure();
-        }
-
-        view_port_update(view_port);
-    }
-
-    view_port_enabled_set(view_port, false);
-    gui_remove_view_port(gui, view_port);
-
-    view_port_free(view_port);
-    furi_message_queue_free(queue);
-
-    furi_record_close(RECORD_GUI);
-
-    free(app);
+    predictor_app_free(app);
 
     return 0;
 }
