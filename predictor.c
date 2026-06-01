@@ -15,13 +15,15 @@ typedef enum {
 } PredictorView;
 
 typedef enum {
-    PredictorEventRedraw = 0,
+    TimeEventRedraw = 0,
+    BMEEventRedraw = 1,
 } PredictorEvent;
 
 typedef struct {
     ViewDispatcher* view_dispatcher;
     View* main_view;
-    FuriTimer* timer;
+    FuriTimer* time_timer;
+    FuriTimer* bme_timer;
 } PredictorApp;
 
 typedef struct {
@@ -29,6 +31,9 @@ typedef struct {
     int32_t pressure;
     int32_t humidity; // Реализовать когда придет датчик
     int32_t ppm; // Реализовать когда придет датчик
+
+    int temperature_list[10];
+    int pressure_list[10];
 
 } PredictorModel;
 
@@ -70,30 +75,46 @@ static void predictor_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 80, 56, "407 ppm");
 }
 
-static void predictor_timer_callback(void* context) {
+static void time_timer_callback(void* context) {
     PredictorApp* app = context;
 
-    view_dispatcher_send_custom_event(app->view_dispatcher, PredictorEventRedraw);
+    view_dispatcher_send_custom_event(app->view_dispatcher, TimeEventRedraw);
+}
+
+static void bme_timer_callback(void* context) {
+    PredictorApp* app = context;
+
+    view_dispatcher_send_custom_event(app->view_dispatcher, BMEEventRedraw);
 }
 
 static void predictor_enter_callback(void* context) {
     PredictorApp* app = context;
 
-    furi_assert(app->timer == NULL);
+    furi_assert(app->time_timer == NULL);
+    furi_assert(app->bme_timer == NULL);
 
-    app->timer = furi_timer_alloc(predictor_timer_callback, FuriTimerTypePeriodic, app);
+    app->time_timer = furi_timer_alloc(time_timer_callback, FuriTimerTypePeriodic, app);
+    app->bme_timer = furi_timer_alloc(bme_timer_callback, FuriTimerTypePeriodic, app);
 
-    furi_timer_start(app->timer,
+    furi_timer_start(app->time_timer,
                      furi_ms_to_ticks(60000)); // 1 минута
+
+    furi_timer_start(app->bme_timer,
+                     furi_ms_to_ticks(10000)); // 10 сек
 }
 
 static void predictor_exit_callback(void* context) {
     PredictorApp* app = context;
 
-    if(app->timer) {
-        furi_timer_stop(app->timer);
-        furi_timer_free(app->timer);
-        app->timer = NULL;
+    if(app->time_timer && app->bme_timer) {
+        furi_timer_stop(app->time_timer);
+        furi_timer_free(app->time_timer);
+
+        furi_timer_stop(app->bme_timer);
+        furi_timer_free(app->bme_timer);
+
+        app->time_timer = NULL;
+        app->bme_timer = NULL;
     }
 }
 
@@ -101,7 +122,10 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
     PredictorApp* app = context;
 
     switch(event) {
-    case PredictorEventRedraw:
+    case TimeEventRedraw:
+        with_view_model(app->main_view, PredictorModel * model, { UNUSED(model); }, true);
+        return true;
+    case BMEEventRedraw:
         with_view_model(
             app->main_view,
             PredictorModel * model,
@@ -110,7 +134,6 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
                 model->pressure = get_pressure();
             },
             true);
-
         return true;
 
     default:
