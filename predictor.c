@@ -50,10 +50,10 @@ static void predictor_draw_callback(Canvas* canvas, void* model) {
 
     canvas_set_font(canvas, FontPrimary);
 
-    snprintf(buf, sizeof(buf), "T: %ld.%ld C", m->temperature / 10, labs(m->temperature % 10));
+    snprintf(buf, sizeof(buf), "%ld.%ld C", m->temperature / 10, labs(m->temperature % 10));
     canvas_draw_str(canvas, 5, 42, buf);
 
-    snprintf(buf, sizeof(buf), "P: %ld Pa", m->pressure);
+    snprintf(buf, sizeof(buf), "%d mmHg", (int)(m->pressure / 133.3));
     canvas_draw_str(canvas, 5, 56, buf);
 }
 
