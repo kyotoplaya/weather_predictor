@@ -48,10 +48,14 @@ static void predictor_draw_callback(Canvas* canvas, void* model) {
     char buf[32];
 
     canvas_set_font(canvas, FontBigNumbers);
+
     snprintf(buf, sizeof(buf), "%02d:%02d", dt.hour, dt.minute);
-    canvas_draw_str(canvas, 35, 24, buf);
+    canvas_draw_str(canvas, 5, 24, buf);
 
     canvas_set_font(canvas, FontPrimary);
+
+    snprintf(buf, sizeof(buf), "%02d.%02d", dt.day, dt.month);
+    canvas_draw_str(canvas, 70, 24, buf);
 
     snprintf(buf, sizeof(buf), "%ld.%ld C", m->temperature / 10, labs(m->temperature % 10));
     canvas_draw_str(canvas, 5, 42, buf);
