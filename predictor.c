@@ -27,6 +27,9 @@ typedef struct {
 typedef struct {
     int32_t temperature;
     int32_t pressure;
+    int32_t humidity; // Реализовать когда придет датчик
+    int32_t ppm; // Реализовать когда придет датчик
+
 } PredictorModel;
 
 static uint32_t predictor_exit_navigation_callback(void* context) {
@@ -46,7 +49,7 @@ static void predictor_draw_callback(Canvas* canvas, void* model) {
 
     canvas_set_font(canvas, FontBigNumbers);
     snprintf(buf, sizeof(buf), "%02d:%02d", dt.hour, dt.minute);
-    canvas_draw_str(canvas, 5, 24, buf);
+    canvas_draw_str(canvas, 35, 24, buf);
 
     canvas_set_font(canvas, FontPrimary);
 
@@ -55,6 +58,12 @@ static void predictor_draw_callback(Canvas* canvas, void* model) {
 
     snprintf(buf, sizeof(buf), "%d mmHg", (int)(m->pressure / 133.3));
     canvas_draw_str(canvas, 5, 56, buf);
+
+    // Временное решение ввиду отсутствия BME280
+    canvas_draw_str(canvas, 102, 42, "27%");
+
+    // Временное решение ввиду отсутствия датчика CO2
+    canvas_draw_str(canvas, 80, 56, "407 ppm");
 }
 
 static void predictor_timer_callback(void* context) {
