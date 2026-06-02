@@ -13,6 +13,12 @@
 
 #define LIST_SIZE 15
 
+#define GRAPH_X    5
+#define GRAPH_Y    5
+#define GRAPH_W    100
+#define GRAPH_H    54
+#define POINT_SIZE 3
+
 typedef enum {
     MainView,
     TempGraphView,
@@ -105,10 +111,15 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
 
     int min_value = find_min(m->temperature_list);
     int max_value = find_max(m->temperature_list);
-    // int delta = max_value - min_value;
 
-    snprintf(buf, sizeof(buf), "Min: %02d    Max: %02d", min_value, max_value);
-    canvas_draw_str(canvas, 5, 24, buf);
+    snprintf(buf, sizeof(buf), "%2d", max_value);
+    canvas_draw_str(canvas, 110, 10, buf);
+
+    snprintf(buf, sizeof(buf), "%2d", (int)m->temperature / 10);
+    canvas_draw_str(canvas, 110, 35, buf);
+
+    snprintf(buf, sizeof(buf), "%2d", min_value);
+    canvas_draw_str(canvas, 110, 60, buf);
 
     // for(int i = 0; i < 5; i++) {
     //     snprintf(buf, sizeof(buf), "%d", m->temperature_list[i]);
@@ -182,7 +193,14 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
 
     switch(event) {
     case TimeEventRedraw:
-        with_view_model(app->main_view, MainViewModel * model, { UNUSED(model); }, true);
+        with_view_model(
+            app->main_view,
+            MainViewModel * model,
+            {
+                model->temperature = get_temperature();
+                model->pressure = (int)(get_pressure() / 133.3);
+            },
+            true);
         return true;
     case BMEEventRedraw:
         with_view_model(
