@@ -7,8 +7,11 @@
 #include <gui/view_dispatcher.h>
 
 #include "bmp180/bmp180.h"
+#include "utils/utils.h"
 
 #define TAG "Predictor"
+
+#define LIST_SIZE 15
 
 typedef enum {
     MainView,
@@ -44,8 +47,8 @@ typedef struct {
     int32_t temperature;
     int32_t pressure;
 
-    int temperature_list[10];
-    int pressure_list[10];
+    int32_t temperature_list[LIST_SIZE];
+    int32_t pressure_list[LIST_SIZE];
 } GraphViewModel;
 
 static uint32_t predictor_exit_navigation_callback(void* context) {
@@ -100,15 +103,22 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
 
     canvas_set_font(canvas, FontPrimary);
 
-    for(int i = 0; i < 5; i++) {
-        snprintf(buf, sizeof(buf), "%d", m->temperature_list[i]);
-        canvas_draw_str(canvas, 5, 11 * (i + 1), buf);
-    }
+    int min_value = find_min(m->temperature_list);
+    int max_value = find_max(m->temperature_list);
+    // int delta = max_value - min_value;
 
-    for(int i = 0; i < 5; i++) {
-        snprintf(buf, sizeof(buf), "%d", m->temperature_list[i + 5]);
-        canvas_draw_str(canvas, 50, 11 * (i + 1), buf);
-    }
+    snprintf(buf, sizeof(buf), "Min: %02d    Max: %02d", min_value, max_value);
+    canvas_draw_str(canvas, 5, 24, buf);
+
+    // for(int i = 0; i < 5; i++) {
+    //     snprintf(buf, sizeof(buf), "%d", m->temperature_list[i]);
+    //     canvas_draw_str(canvas, 5, 11 * (i + 1), buf);
+    // }
+
+    // for(int i = 0; i < 5; i++) {
+    //     snprintf(buf, sizeof(buf), "%d", m->temperature_list[i + 5]);
+    //     canvas_draw_str(canvas, 50, 11 * (i + 1), buf);
+    // }
 }
 
 static void main_view_timer_callback(void* context) {
@@ -182,15 +192,15 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
                 model->temperature = get_temperature();
                 model->pressure = (int)(get_pressure() / 133.3);
 
-                for(int i = 0; i < 9; i++) {
+                for(int i = 0; i < LIST_SIZE - 1; i++) {
                     model->temperature_list[i] = model->temperature_list[i + 1];
                 }
-                model->temperature_list[9] = model->temperature;
+                model->temperature_list[LIST_SIZE - 1] = model->temperature;
 
-                for(int i = 0; i < 9; i++) {
+                for(int i = 0; i < LIST_SIZE - 1; i++) {
                     model->pressure_list[i] = model->pressure_list[i + 1];
                 }
-                model->pressure_list[9] = model->pressure;
+                model->pressure_list[LIST_SIZE - 1] = model->pressure;
             },
             true);
         return true;
@@ -253,7 +263,7 @@ static PredictorApp* predictor_app_alloc(void) {
             model->temperature = get_temperature();
             model->pressure = (int)(get_pressure() / 133.3);
 
-            for(int i = 0; i < 10; i++) {
+            for(int i = 0; i < LIST_SIZE; i++) {
                 model->temperature_list[i] = model->temperature;
                 model->pressure_list[i] = model->pressure;
             }
