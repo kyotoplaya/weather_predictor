@@ -27,8 +27,8 @@ typedef struct {
     View* main_view;
     View* temp_graph_view;
 
-    FuriTimer* time_timer;
-    FuriTimer* bme_timer;
+    FuriTimer* main_view_timer;
+    FuriTimer* graph_timer;
 
     int32_t temperature;
     int32_t pressure;
@@ -58,7 +58,7 @@ static uint32_t predictor_back_to_main_callback(void* context) {
     return MainView;
 }
 
-static void predictor_draw_main_callback(Canvas* canvas, void* model) {
+static void draw_main_callback(Canvas* canvas, void* model) {
     MainViewModel* m = model;
 
     DateTime dt;
@@ -91,7 +91,7 @@ static void predictor_draw_main_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 80, 56, "407 ppm");
 }
 
-static void predictor_draw_temp_graph_callback(Canvas* canvas, void* model) {
+static void draw_temp_graph_callback(Canvas* canvas, void* model) {
     GraphViewModel* m = model;
 
     canvas_clear(canvas);
@@ -106,51 +106,64 @@ static void predictor_draw_temp_graph_callback(Canvas* canvas, void* model) {
     }
 
     for(int i = 0; i < 5; i++) {
-        snprintf(buf, sizeof(buf), "%d", m->temperature_list[i]);
+        snprintf(buf, sizeof(buf), "%d", m->temperature_list[i + 5]);
         canvas_draw_str(canvas, 50, 11 * (i + 1), buf);
     }
 }
 
-static void time_timer_callback(void* context) {
+static void main_view_timer_callback(void* context) {
     PredictorApp* app = context;
 
     view_dispatcher_send_custom_event(app->view_dispatcher, TimeEventRedraw);
 }
 
-static void bme_timer_callback(void* context) {
+static void graph_timer_callback(void* context) {
     PredictorApp* app = context;
 
     view_dispatcher_send_custom_event(app->view_dispatcher, BMEEventRedraw);
 }
 
-static void predictor_enter_callback(void* context) {
+static void main_view_enter_callback(void* context) {
     PredictorApp* app = context;
 
-    furi_assert(app->time_timer == NULL);
-    furi_assert(app->bme_timer == NULL);
+    furi_assert(app->main_view_timer == NULL);
 
-    app->time_timer = furi_timer_alloc(time_timer_callback, FuriTimerTypePeriodic, app);
-    app->bme_timer = furi_timer_alloc(bme_timer_callback, FuriTimerTypePeriodic, app);
+    app->main_view_timer = furi_timer_alloc(main_view_timer_callback, FuriTimerTypePeriodic, app);
 
-    furi_timer_start(app->time_timer,
+    furi_timer_start(app->main_view_timer,
                      furi_ms_to_ticks(60000)); // 1 минута
+}
 
-    furi_timer_start(app->bme_timer,
+static void graph_view_enter_callback(void* context) {
+    PredictorApp* app = context;
+
+    furi_assert(app->graph_timer == NULL);
+
+    app->graph_timer = furi_timer_alloc(graph_timer_callback, FuriTimerTypePeriodic, app);
+
+    furi_timer_start(app->graph_timer,
                      furi_ms_to_ticks(10000)); // 10 сек
 }
 
-static void predictor_exit_callback(void* context) {
+static void main_view_exit_callback(void* context) {
     PredictorApp* app = context;
 
-    if(app->time_timer && app->bme_timer) {
-        furi_timer_stop(app->time_timer);
-        furi_timer_free(app->time_timer);
+    if(app->main_view_timer) {
+        furi_timer_stop(app->main_view_timer);
+        furi_timer_free(app->main_view_timer);
 
-        furi_timer_stop(app->bme_timer);
-        furi_timer_free(app->bme_timer);
+        app->main_view_timer = NULL;
+    }
+}
 
-        app->time_timer = NULL;
-        app->bme_timer = NULL;
+static void graph_view_exit_callback(void* context) {
+    PredictorApp* app = context;
+
+    if(app->graph_timer) {
+        furi_timer_stop(app->graph_timer);
+        furi_timer_free(app->graph_timer);
+
+        app->graph_timer = NULL;
     }
 }
 
@@ -162,15 +175,6 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
         with_view_model(app->main_view, MainViewModel * model, { UNUSED(model); }, true);
         return true;
     case BMEEventRedraw:
-        with_view_model(
-            app->main_view,
-            MainViewModel * model,
-            {
-                model->temperature = get_temperature();
-                model->pressure = (int)(get_pressure() / 133.3);
-            },
-            true);
-
         with_view_model(
             app->temp_graph_view,
             GraphViewModel * model,
@@ -227,7 +231,9 @@ static PredictorApp* predictor_app_alloc(void) {
     app->temp_graph_view = view_alloc();
 
     view_set_context(app->main_view, app);
+    view_set_context(app->temp_graph_view, app);
 
+    // Аллоцируем модели
     view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(MainViewModel));
     view_allocate_model(app->temp_graph_view, ViewModelTypeLockFree, sizeof(GraphViewModel));
 
@@ -254,20 +260,23 @@ static PredictorApp* predictor_app_alloc(void) {
         },
         false);
 
-    view_set_draw_callback(app->main_view, predictor_draw_main_callback);
-    view_set_draw_callback(app->temp_graph_view, predictor_draw_temp_graph_callback);
+    view_set_draw_callback(app->main_view, draw_main_callback);
+    view_set_draw_callback(app->temp_graph_view, draw_temp_graph_callback);
 
     view_set_input_callback(app->main_view, predictor_input_callback);
     view_set_input_callback(app->temp_graph_view, predictor_input_callback);
 
-    view_set_enter_callback(app->main_view, predictor_enter_callback);
+    view_set_enter_callback(app->main_view, main_view_enter_callback);
+    view_set_enter_callback(app->temp_graph_view, graph_view_enter_callback);
 
-    view_set_exit_callback(app->main_view, predictor_exit_callback);
+    view_set_exit_callback(app->main_view, main_view_exit_callback);
+    view_set_exit_callback(app->temp_graph_view, graph_view_exit_callback);
 
     view_set_previous_callback(app->main_view, predictor_exit_navigation_callback);
     view_set_previous_callback(app->temp_graph_view, predictor_back_to_main_callback);
 
     view_set_custom_callback(app->main_view, predictor_custom_event_callback);
+    view_set_custom_callback(app->temp_graph_view, predictor_custom_event_callback);
 
     view_dispatcher_add_view(app->view_dispatcher, MainView, app->main_view);
     view_dispatcher_add_view(app->view_dispatcher, TempGraphView, app->temp_graph_view);
