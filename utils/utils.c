@@ -7,7 +7,7 @@ int find_min(int32_t* list) {
         if(list[i] < min) min = list[i];
     }
 
-    return (int)min / 10;
+    return (int)min;
 }
 
 int find_max(int32_t* list) {
@@ -17,5 +17,5 @@ int find_max(int32_t* list) {
         if(list[i] > max) max = list[i];
     }
 
-    return (int)max / 10;
+    return (int)max;
 }

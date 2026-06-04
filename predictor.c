@@ -16,7 +16,7 @@
 typedef enum {
     MainView,
     TempGraphView,
-
+    PressureGraphView,
 } PredictorView;
 
 typedef enum {
@@ -29,6 +29,7 @@ typedef struct {
 
     View* main_view;
     View* temp_graph_view;
+    View* pressure_graph_view;
 
     FuriTimer* main_view_timer;
     FuriTimer* graph_timer;
@@ -99,31 +100,64 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
 
     canvas_clear(canvas);
 
-    int min_value = find_min(m->temperature_list);
-    int max_value = find_max(m->temperature_list);
+    int min = find_min(m->temperature_list) / 10;
+    int max = find_max(m->temperature_list) / 10;
 
     char buf[32];
 
     canvas_set_font(canvas, FontPrimary);
 
-    snprintf(buf, sizeof(buf), "%2d", max_value);
+    snprintf(buf, sizeof(buf), "%2d", max);
     canvas_draw_str(canvas, 110, 10, buf);
 
     snprintf(buf, sizeof(buf), "%2d", (int)m->temperature / 10);
     canvas_draw_str(canvas, 110, 35, buf);
 
-    snprintf(buf, sizeof(buf), "%2d", min_value);
+    snprintf(buf, sizeof(buf), "%2d", min);
     canvas_draw_str(canvas, 110, 60, buf);
 
     int x1 = 5;
     int y2;
 
     for(int i = 0; i < LIST_SIZE; i++) {
-        y2 = ((int)(m->temperature_list[i] / 10 - min_value)) * 6 + 10;
+        y2 = ((int)(m->temperature_list[i] / 10 - min)) * 6 + 10;
         if(y2 <= 10) y2 = 10;
 
         canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
         x1 += 7;
+    }
+}
+
+static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
+    GraphViewModel* m = model;
+
+    canvas_clear(canvas);
+
+    int min = find_min(m->pressure_list);
+    int max = find_max(m->pressure_list);
+
+    char buf[32];
+
+    canvas_set_font(canvas, FontPrimary);
+
+    snprintf(buf, sizeof(buf), "%d", max);
+    canvas_draw_str(canvas, 100, 10, buf);
+
+    snprintf(buf, sizeof(buf), "%ld", m->pressure);
+    canvas_draw_str(canvas, 100, 35, buf);
+
+    snprintf(buf, sizeof(buf), "%d", min);
+    canvas_draw_str(canvas, 100, 60, buf);
+
+    int x1 = 5;
+    int y2;
+
+    for(int i = 0; i < LIST_SIZE; i++) {
+        y2 = ((int)(m->temperature_list[i] / 10 - min)) * 6 + 10;
+        if(y2 <= 10) y2 = 10;
+
+        canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
+        x1 += 6;
     }
 }
 
@@ -203,12 +237,19 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
             GraphViewModel * model,
             {
                 model->temperature = get_temperature();
-                model->pressure = (int)(get_pressure() / 133.3);
 
                 for(int i = 0; i < LIST_SIZE - 1; i++) {
                     model->temperature_list[i] = model->temperature_list[i + 1];
                 }
                 model->temperature_list[LIST_SIZE - 1] = model->temperature;
+            },
+            true);
+
+        with_view_model(
+            app->pressure_graph_view,
+            GraphViewModel * model,
+            {
+                model->pressure = (int)(get_pressure() / 133.3);
 
                 for(int i = 0; i < LIST_SIZE - 1; i++) {
                     model->pressure_list[i] = model->pressure_list[i + 1];
@@ -217,10 +258,8 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
             },
             true);
         return true;
-
-    default:
-        return false;
     }
+    return false;
 }
 
 static bool predictor_input_callback(InputEvent* event, void* context) {
@@ -228,9 +267,11 @@ static bool predictor_input_callback(InputEvent* event, void* context) {
     if(event->type == InputTypeShort) {
         if(event->key == InputKeyRight) {
             view_dispatcher_switch_to_view(app->view_dispatcher, TempGraphView);
-
-            return true;
+        } else if(event->key == InputKeyLeft) {
+            view_dispatcher_switch_to_view(app->view_dispatcher, PressureGraphView);
         }
+
+        return true;
     }
     return false;
 }
@@ -252,13 +293,16 @@ static PredictorApp* predictor_app_alloc(void) {
 
     app->main_view = view_alloc();
     app->temp_graph_view = view_alloc();
+    app->pressure_graph_view = view_alloc();
 
     view_set_context(app->main_view, app);
     view_set_context(app->temp_graph_view, app);
+    view_set_context(app->pressure_graph_view, app);
 
     // Аллоцируем модели
     view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(MainViewModel));
     view_allocate_model(app->temp_graph_view, ViewModelTypeLockFree, sizeof(GraphViewModel));
+    view_allocate_model(app->pressure_graph_view, ViewModelTypeLockFree, sizeof(GraphViewModel));
 
     with_view_model(
         app->main_view,
@@ -283,26 +327,47 @@ static PredictorApp* predictor_app_alloc(void) {
         },
         false);
 
+    with_view_model(
+        app->pressure_graph_view,
+        GraphViewModel * model,
+        {
+            model->temperature = get_temperature();
+            model->pressure = (int)(get_pressure() / 133.3);
+
+            for(int i = 0; i < LIST_SIZE; i++) {
+                model->temperature_list[i] = model->temperature;
+                model->pressure_list[i] = model->pressure;
+            }
+        },
+        false);
+
     view_set_draw_callback(app->main_view, draw_main_callback);
     view_set_draw_callback(app->temp_graph_view, draw_temp_graph_callback);
+    view_set_draw_callback(app->pressure_graph_view, draw_pressure_graph_callback);
 
     view_set_input_callback(app->main_view, predictor_input_callback);
     view_set_input_callback(app->temp_graph_view, predictor_input_callback);
+    view_set_input_callback(app->pressure_graph_view, predictor_input_callback);
 
     view_set_enter_callback(app->main_view, main_view_enter_callback);
     view_set_enter_callback(app->temp_graph_view, graph_view_enter_callback);
+    view_set_enter_callback(app->pressure_graph_view, graph_view_enter_callback);
 
     view_set_exit_callback(app->main_view, main_view_exit_callback);
     view_set_exit_callback(app->temp_graph_view, graph_view_exit_callback);
+    view_set_exit_callback(app->pressure_graph_view, graph_view_exit_callback);
 
     view_set_previous_callback(app->main_view, predictor_exit_navigation_callback);
     view_set_previous_callback(app->temp_graph_view, predictor_back_to_main_callback);
+    view_set_previous_callback(app->pressure_graph_view, predictor_back_to_main_callback);
 
     view_set_custom_callback(app->main_view, predictor_custom_event_callback);
     view_set_custom_callback(app->temp_graph_view, predictor_custom_event_callback);
+    view_set_custom_callback(app->pressure_graph_view, predictor_custom_event_callback);
 
     view_dispatcher_add_view(app->view_dispatcher, MainView, app->main_view);
     view_dispatcher_add_view(app->view_dispatcher, TempGraphView, app->temp_graph_view);
+    view_dispatcher_add_view(app->view_dispatcher, PressureGraphView, app->pressure_graph_view);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, MainView);
 
@@ -312,9 +377,11 @@ static PredictorApp* predictor_app_alloc(void) {
 static void predictor_app_free(PredictorApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, MainView);
     view_dispatcher_remove_view(app->view_dispatcher, TempGraphView);
+    view_dispatcher_remove_view(app->view_dispatcher, PressureGraphView);
 
     view_free(app->main_view);
     view_free(app->temp_graph_view);
+    view_free(app->pressure_graph_view);
 
     view_dispatcher_free(app->view_dispatcher);
 
