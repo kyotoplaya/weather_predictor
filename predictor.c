@@ -33,24 +33,49 @@ typedef struct {
 
     FuriTimer* main_view_timer;
     FuriTimer* graph_timer;
-
-    int32_t temperature;
-    int32_t pressure;
+    FuriTimer* analyzer_timer;
 
 } PredictorApp;
 
 typedef struct {
-    int32_t temperature;
-    int32_t pressure;
-} MainViewModel;
+    int temperature;
+    int pressure;
 
-typedef struct {
-    int32_t temperature;
-    int32_t pressure;
+    int temperature_1h_list[15];
+    int pressure_1h_list[15];
 
-    int32_t temperature_list[LIST_SIZE];
-    int32_t pressure_list[LIST_SIZE];
-} GraphViewModel;
+    int temperature_24h_list[24];
+    int pressure_24h_list[24];
+} PredictorModel;
+
+static void predictor_model_init(PredictorModel* model) {
+    model->temperature = get_temperature();
+    model->pressure = (int)(get_pressure() / 133.3);
+
+    for(int i = 0; i < 15; i++) {
+        model->temperature_1h_list[i] = model->temperature;
+        model->pressure_1h_list[i] = model->pressure;
+    }
+
+    for(int i = 0; i < 24; i++) {
+        model->temperature_24h_list[i] = model->temperature;
+        model->pressure_24h_list[i] = model->pressure;
+    }
+}
+
+static void predictor_model_update(PredictorModel* model) {
+    model->temperature = get_temperature();
+    model->pressure = (int)(get_pressure() / 133.3);
+
+    for(int i = 0; i < 14; i++) {
+        model->temperature_1h_list[i] = model->temperature_1h_list[i + 1];
+
+        model->pressure_1h_list[i] = model->pressure_1h_list[i + 1];
+    }
+
+    model->temperature_1h_list[14] = model->temperature;
+    model->pressure_1h_list[14] = model->pressure;
+}
 
 static uint32_t predictor_exit_navigation_callback(void* context) {
     UNUSED(context);
@@ -63,7 +88,7 @@ static uint32_t predictor_back_to_main_callback(void* context) {
 }
 
 static void draw_main_callback(Canvas* canvas, void* model) {
-    MainViewModel* m = model;
+    PredictorModel* m = model;
 
     DateTime dt;
     furi_hal_rtc_get_datetime(&dt);
@@ -82,10 +107,10 @@ static void draw_main_callback(Canvas* canvas, void* model) {
     snprintf(buf, sizeof(buf), "%02d.%02d", dt.day, dt.month);
     canvas_draw_str(canvas, 70, 24, buf);
 
-    snprintf(buf, sizeof(buf), "%ld.%ld C", m->temperature / 10, labs(m->temperature % 10));
+    snprintf(buf, sizeof(buf), "%d.%d C", m->temperature / 10, m->temperature % 10);
     canvas_draw_str(canvas, 5, 42, buf);
 
-    snprintf(buf, sizeof(buf), "%ld mmHg", m->pressure);
+    snprintf(buf, sizeof(buf), "%d mmHg", m->pressure);
     canvas_draw_str(canvas, 5, 56, buf);
 
     // Временное решение ввиду отсутствия BME280
@@ -96,12 +121,12 @@ static void draw_main_callback(Canvas* canvas, void* model) {
 }
 
 static void draw_temp_graph_callback(Canvas* canvas, void* model) {
-    GraphViewModel* m = model;
+    PredictorModel* m = model;
 
     canvas_clear(canvas);
 
-    int min = find_min(m->temperature_list) / 10;
-    int max = find_max(m->temperature_list) / 10;
+    int min = find_min(m->temperature_1h_list) / 10;
+    int max = find_max(m->temperature_1h_list) / 10;
 
     char buf[32];
 
@@ -120,7 +145,7 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
     int y2;
 
     for(int i = 0; i < LIST_SIZE; i++) {
-        y2 = ((int)(m->temperature_list[i] / 10 - min)) * 6 + 10;
+        y2 = ((int)(m->temperature_1h_list[i] / 10 - min)) * 6 + 10;
         if(y2 <= 10) y2 = 10;
 
         canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
@@ -129,12 +154,12 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
 }
 
 static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
-    GraphViewModel* m = model;
+    PredictorModel* m = model;
 
     canvas_clear(canvas);
 
-    int min = find_min(m->pressure_list);
-    int max = find_max(m->pressure_list);
+    int min = find_min(m->pressure_1h_list);
+    int max = find_max(m->pressure_1h_list);
 
     char buf[32];
 
@@ -143,7 +168,7 @@ static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
     snprintf(buf, sizeof(buf), "%d", max);
     canvas_draw_str(canvas, 100, 10, buf);
 
-    snprintf(buf, sizeof(buf), "%ld", m->pressure);
+    snprintf(buf, sizeof(buf), "%d", (int)m->pressure);
     canvas_draw_str(canvas, 100, 35, buf);
 
     snprintf(buf, sizeof(buf), "%d", min);
@@ -153,7 +178,7 @@ static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
     int y2;
 
     for(int i = 0; i < LIST_SIZE; i++) {
-        y2 = ((int)(m->pressure_list[i] / 10 - min)) * 6 + 10;
+        y2 = ((int)(m->pressure_1h_list[i] / 10 - min)) * 6 + 10;
         if(y2 <= 10) y2 = 10;
 
         canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
@@ -224,39 +249,28 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
     case TimeEventRedraw:
         with_view_model(
             app->main_view,
-            MainViewModel * model,
+            PredictorModel * model,
             {
                 model->temperature = get_temperature();
                 model->pressure = (int)(get_pressure() / 133.3);
             },
             true);
         return true;
-    case BMEEventRedraw:
-        with_view_model(
-            app->temp_graph_view,
-            GraphViewModel * model,
-            {
-                model->temperature = get_temperature();
 
-                for(int i = 0; i < LIST_SIZE - 1; i++) {
-                    model->temperature_list[i] = model->temperature_list[i + 1];
-                }
-                model->temperature_list[LIST_SIZE - 1] = model->temperature;
-            },
-            true);
+    case BMEEventRedraw:
+
+        with_view_model(
+            app->main_view, PredictorModel * model, { predictor_model_update(model); }, true);
+
+        with_view_model(
+            app->temp_graph_view, PredictorModel * model, { predictor_model_update(model); }, true);
 
         with_view_model(
             app->pressure_graph_view,
-            GraphViewModel * model,
-            {
-                model->pressure = (int)(get_pressure() / 133.3);
-
-                for(int i = 0; i < LIST_SIZE - 1; i++) {
-                    model->pressure_list[i] = model->pressure_list[i + 1];
-                }
-                model->pressure_list[LIST_SIZE - 1] = model->pressure;
-            },
+            PredictorModel * model,
+            { predictor_model_update(model); },
             true);
+
         return true;
     }
     return false;
@@ -300,46 +314,39 @@ static PredictorApp* predictor_app_alloc(void) {
     view_set_context(app->pressure_graph_view, app);
 
     // Аллоцируем модели
-    view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(MainViewModel));
-    view_allocate_model(app->temp_graph_view, ViewModelTypeLockFree, sizeof(GraphViewModel));
-    view_allocate_model(app->pressure_graph_view, ViewModelTypeLockFree, sizeof(GraphViewModel));
+    view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(PredictorModel));
+
+    view_allocate_model(app->temp_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
+
+    view_allocate_model(app->pressure_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
 
     with_view_model(
         app->main_view,
-        MainViewModel * model,
-        {
-            model->temperature = get_temperature();
-            model->pressure = (int)(get_pressure() / 133.3);
-        },
-        false);
-
-    with_view_model(
-        app->temp_graph_view,
-        GraphViewModel * model,
+        PredictorModel * model,
         {
             model->temperature = get_temperature();
             model->pressure = (int)(get_pressure() / 133.3);
 
-            for(int i = 0; i < LIST_SIZE; i++) {
-                model->temperature_list[i] = model->temperature;
-                model->pressure_list[i] = model->pressure;
+            for(int i = 0; i < 15; i++) {
+                model->temperature_1h_list[i] = model->temperature;
+                model->pressure_1h_list[i] = model->pressure;
+            }
+
+            for(int i = 0; i < 24; i++) {
+                model->temperature_24h_list[i] = model->temperature;
+                model->pressure_24h_list[i] = model->pressure;
             }
         },
         false);
 
     with_view_model(
-        app->pressure_graph_view,
-        GraphViewModel * model,
-        {
-            model->temperature = get_temperature();
-            model->pressure = (int)(get_pressure() / 133.3);
+        app->main_view, PredictorModel * model, { predictor_model_init(model); }, false);
 
-            for(int i = 0; i < LIST_SIZE; i++) {
-                model->temperature_list[i] = model->temperature;
-                model->pressure_list[i] = model->pressure;
-            }
-        },
-        false);
+    with_view_model(
+        app->temp_graph_view, PredictorModel * model, { predictor_model_init(model); }, false);
+
+    with_view_model(
+        app->pressure_graph_view, PredictorModel * model, { predictor_model_init(model); }, false);
 
     view_set_draw_callback(app->main_view, draw_main_callback);
     view_set_draw_callback(app->temp_graph_view, draw_temp_graph_callback);
