@@ -153,7 +153,7 @@ static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
     int y2;
 
     for(int i = 0; i < LIST_SIZE; i++) {
-        y2 = ((int)(m->temperature_list[i] / 10 - min)) * 6 + 10;
+        y2 = ((int)(m->pressure_list[i] / 10 - min)) * 6 + 10;
         if(y2 <= 10) y2 = 10;
 
         canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
