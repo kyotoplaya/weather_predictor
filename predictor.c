@@ -13,12 +13,6 @@
 
 #define LIST_SIZE 15
 
-#define GRAPH_X    5
-#define GRAPH_Y    5
-#define GRAPH_W    100
-#define GRAPH_H    54
-#define POINT_SIZE 3
-
 typedef enum {
     MainView,
     TempGraphView,
@@ -105,12 +99,12 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
 
     canvas_clear(canvas);
 
+    int min_value = find_min(m->temperature_list);
+    int max_value = find_max(m->temperature_list);
+
     char buf[32];
 
     canvas_set_font(canvas, FontPrimary);
-
-    int min_value = find_min(m->temperature_list);
-    int max_value = find_max(m->temperature_list);
 
     snprintf(buf, sizeof(buf), "%2d", max_value);
     canvas_draw_str(canvas, 110, 10, buf);
@@ -121,15 +115,16 @@ static void draw_temp_graph_callback(Canvas* canvas, void* model) {
     snprintf(buf, sizeof(buf), "%2d", min_value);
     canvas_draw_str(canvas, 110, 60, buf);
 
-    // for(int i = 0; i < 5; i++) {
-    //     snprintf(buf, sizeof(buf), "%d", m->temperature_list[i]);
-    //     canvas_draw_str(canvas, 5, 11 * (i + 1), buf);
-    // }
+    int x1 = 5;
+    int y2;
 
-    // for(int i = 0; i < 5; i++) {
-    //     snprintf(buf, sizeof(buf), "%d", m->temperature_list[i + 5]);
-    //     canvas_draw_str(canvas, 50, 11 * (i + 1), buf);
-    // }
+    for(int i = 0; i < LIST_SIZE; i++) {
+        y2 = ((int)(m->temperature_list[i] / 10 - min_value)) * 6 + 10;
+        if(y2 <= 10) y2 = 10;
+
+        canvas_draw_box(canvas, x1, 60 - y2, 5, y2);
+        x1 += 7;
+    }
 }
 
 static void main_view_timer_callback(void* context) {
