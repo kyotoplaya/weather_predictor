@@ -6,7 +6,7 @@
 #include <gui/view.h>
 #include <gui/view_dispatcher.h>
 
-#include "bmp180/bmp180.h"
+#include "bme280/bme280.h"
 #include "utils/utils.h"
 
 #define TAG "Predictor"
@@ -40,6 +40,7 @@ typedef struct {
 typedef struct {
     int temperature;
     int pressure;
+    int humidity;
 
     int temperature_1h_list[15];
     int pressure_1h_list[15];
@@ -49,8 +50,13 @@ typedef struct {
 } PredictorModel;
 
 static void predictor_model_init(PredictorModel* model) {
-    model->temperature = get_temperature();
-    model->pressure = (int)(get_pressure() / 133.3);
+    int32_t temp, press;
+    int rh;
+    bme280_read(&temp, &press, &rh);
+
+    model->temperature = temp;
+    model->pressure = (int)(press / 133.3);
+    model->humidity = rh;
 
     for(int i = 0; i < 15; i++) {
         model->temperature_1h_list[i] = model->temperature;
@@ -64,8 +70,13 @@ static void predictor_model_init(PredictorModel* model) {
 }
 
 static void predictor_model_update(PredictorModel* model) {
-    model->temperature = get_temperature();
-    model->pressure = (int)(get_pressure() / 133.3);
+    int32_t temp, press;
+    int rh;
+    bme280_read(&temp, &press, &rh);
+
+    model->temperature = temp;
+    model->pressure = (int)(press / 133.3);
+    model->humidity = rh;
 
     for(int i = 0; i < 14; i++) {
         model->temperature_1h_list[i] = model->temperature_1h_list[i + 1];
@@ -113,8 +124,8 @@ static void draw_main_callback(Canvas* canvas, void* model) {
     snprintf(buf, sizeof(buf), "%d mmHg", m->pressure);
     canvas_draw_str(canvas, 5, 56, buf);
 
-    // Временное решение ввиду отсутствия BME280
-    canvas_draw_str(canvas, 102, 42, "27%");
+    snprintf(buf, sizeof(buf), "%d %%", m->humidity);
+    canvas_draw_str(canvas, 102, 42, buf);
 
     // Временное решение ввиду отсутствия датчика CO2
     canvas_draw_str(canvas, 80, 56, "407 ppm");
@@ -206,7 +217,7 @@ static void main_view_enter_callback(void* context) {
     app->main_view_timer = furi_timer_alloc(main_view_timer_callback, FuriTimerTypePeriodic, app);
 
     furi_timer_start(app->main_view_timer,
-                     furi_ms_to_ticks(60000)); // 1 минута
+                     furi_ms_to_ticks(2000)); // 1 минута
 }
 
 static void graph_view_enter_callback(void* context) {
@@ -247,12 +258,16 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
 
     switch(event) {
     case TimeEventRedraw:
+        int32_t temp, press;
+        int rh;
+        bme280_read(&temp, &press, &rh);
         with_view_model(
             app->main_view,
             PredictorModel * model,
             {
-                model->temperature = get_temperature();
-                model->pressure = (int)(get_pressure() / 133.3);
+                model->temperature = temp;
+                model->pressure = (int)(press / 133.3);
+                model->humidity = rh;
             },
             true);
         return true;
@@ -295,8 +310,8 @@ static PredictorApp* predictor_app_alloc(void) {
 
     Gui* gui = furi_record_open(RECORD_GUI);
 
-    if(!bmp180_init()) {
-        FURI_LOG_E(TAG, "BMP180 init failed");
+    if(!bme280_init()) {
+        FURI_LOG_E(TAG, "BME280 init failed");
     }
 
     app->view_dispatcher = view_dispatcher_alloc();
@@ -320,12 +335,17 @@ static PredictorApp* predictor_app_alloc(void) {
 
     view_allocate_model(app->pressure_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
 
+    int32_t temp, press;
+    int rh;
+    bme280_read(&temp, &press, &rh);
+
     with_view_model(
         app->main_view,
         PredictorModel * model,
         {
-            model->temperature = get_temperature();
-            model->pressure = (int)(get_pressure() / 133.3);
+            model->temperature = temp;
+            model->pressure = (int)(press / 133.3);
+            model->humidity = rh;
 
             for(int i = 0; i < 15; i++) {
                 model->temperature_1h_list[i] = model->temperature;
