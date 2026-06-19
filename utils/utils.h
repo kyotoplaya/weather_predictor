@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-#define LIST_SIZE 15
-
-int find_min(int* list);
-int find_max(int* list);
-int get_avg(int* list);
+int find_min(const int* list, int size);
+int find_max(const int* list, int size);
+int get_avg(const int* list, int size);
