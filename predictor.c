@@ -9,10 +9,15 @@
 
 #include "bme280/bme280.h"
 #include "utils/utils.h"
+#include "history/history.h"
+#include "sensors/sensors.h"
+#include "graph/graph.h"
+#include "prediction/prediction.h"
+
+#include "views/main.h"
+#include "views/graph.h"
 
 #define TAG "Predictor"
-
-#define LIST_SIZE 15
 
 typedef enum {
     MainView,
@@ -31,34 +36,6 @@ typedef enum {
     HistoryEvent,
     GraphIntervalChangeEvent,
 } PredictorEvent;
-
-typedef enum {
-    GraphInterval1H,
-    GraphInterval24H,
-} GraphInterval;
-
-typedef struct {
-    int temperature;
-    int pressure;
-    int humidity;
-
-    int temperature_1h[15]; // измерения за час, 15 с интервалом 4 мин
-    int pressure_1h[15];
-    int humidity_1h[15];
-
-    int temperature_3h[3]; // усредненные измерения за 3 часа с интервалом час
-    int pressure_3h[3];
-    int humidity_3h[3];
-
-    int temperature_day[24]; // усредненные измерения за сутки с интервалом час
-    int pressure_day[24];
-    int humidity_day[24];
-
-    int8_t hour_index;
-
-    GraphInterval graph_interval;
-
-} PredictorHistory;
 
 typedef struct {
     ViewDispatcher* view_dispatcher;
@@ -82,21 +59,6 @@ typedef struct {
 
 } PredictorApp;
 
-typedef struct {
-    int temperature;
-    int pressure;
-    int humidity;
-
-    PredictorHistory* history;
-
-} PredictorModel;
-
-typedef struct {
-    int temperature;
-    int pressure;
-    int humidity;
-} SensorData;
-
 static uint8_t next_view(uint8_t v) {
     return (v + 1) % PredictorViewCount;
 }
@@ -105,55 +67,9 @@ static uint8_t prev_view(uint8_t v) {
     return (v + PredictorViewCount - 1) % PredictorViewCount;
 }
 
-static void history_push(PredictorHistory* history, int temperature, int pressure, int humidity) {
-    for(int i = 0; i < 14; i++) {
-        history->temperature_1h[i] = history->temperature_1h[i + 1];
-
-        history->pressure_1h[i] = history->pressure_1h[i + 1];
-
-        history->humidity_1h[i] = history->humidity_1h[i + 1];
-    }
-
-    history->temperature = temperature;
-    history->pressure = pressure;
-    history->humidity = humidity;
-
-    history->temperature_1h[14] = temperature;
-    history->pressure_1h[14] = pressure;
-    history->humidity_1h[14] = humidity;
-}
-
-static void predictor_model_init(PredictorModel* model, PredictorHistory* history) {
-    int32_t temp, press;
-    int rh;
-    bme280_read(&temp, &press, &rh);
-
-    model->temperature = temp;
-    model->pressure = (int)(press / 133.3);
-    model->humidity = rh;
-    model->history = history;
-
-    for(int i = 0; i < 15; i++) {
-        model->history->temperature_1h[i] = model->temperature;
-        model->history->pressure_1h[i] = model->pressure;
-        model->history->humidity_1h[i] = model->humidity;
-    }
-
-    for(int i = 0; i < 24; i++) {
-        model->history->temperature_day[i] = model->temperature;
-        model->history->pressure_day[i] = model->pressure;
-        model->history->humidity_day[i] = model->humidity;
-    }
-}
-
-static void predictor_model_update(PredictorModel* model, const SensorData* data) {
-    model->temperature = data->temperature;
-    model->pressure = data->pressure;
-    model->humidity = data->humidity;
-}
-
 static uint32_t predictor_exit_navigation_callback(void* context) {
-    UNUSED(context);
+    PredictorApp* app = context;
+    history_save(app->history);
     return VIEW_NONE;
 }
 
@@ -163,136 +79,6 @@ static uint32_t predictor_back_to_main_callback(void* context) {
     app->selected_view_index = MainView;
 
     return MainView;
-}
-
-static void draw_main_callback(Canvas* canvas, void* model) {
-    PredictorModel* m = model;
-
-    DateTime dt;
-    furi_hal_rtc_get_datetime(&dt);
-
-    canvas_clear(canvas);
-
-    char buf[32];
-
-    canvas_set_font(canvas, FontBigNumbers);
-
-    snprintf(buf, sizeof(buf), "%02d:%02d", dt.hour, dt.minute);
-    canvas_draw_str(canvas, 5, 24, buf);
-
-    canvas_set_font(canvas, FontPrimary);
-
-    snprintf(buf, sizeof(buf), "%02d.%02d", dt.day, dt.month);
-    canvas_draw_str(canvas, 70, 24, buf);
-
-    snprintf(buf, sizeof(buf), "%d.%d C", m->temperature / 10, m->temperature % 10);
-    canvas_draw_str(canvas, 5, 42, buf);
-
-    snprintf(buf, sizeof(buf), "%d mmHg", m->pressure);
-    canvas_draw_str(canvas, 5, 56, buf);
-
-    snprintf(buf, sizeof(buf), "%d %%", m->humidity);
-    canvas_draw_str(canvas, 102, 42, buf);
-
-    // Временное решение ввиду отсутствия датчика CO2
-    canvas_draw_str(canvas, 80, 56, "407 ppm");
-}
-
-static void draw_bar_graph(
-    Canvas* canvas,
-    const int* data,
-    size_t count,
-    int current_value,
-    int divisor,
-    const char* title,
-    bool show_current) {
-    int min_raw = find_min((int*)data, count);
-    int max_raw = find_max((int*)data, count);
-
-    int range = max_raw - min_raw;
-    if(range == 0) {
-        range = 1;
-    }
-
-    char buf[32];
-
-    canvas_set_font(canvas, FontPrimary);
-
-    if(show_current) {
-        snprintf(buf, sizeof(buf), "%d", max_raw / divisor);
-        canvas_draw_str(canvas, 110, 10, buf);
-
-        snprintf(buf, sizeof(buf), "%d", current_value / divisor);
-        canvas_draw_str(canvas, 110, 35, buf);
-
-        snprintf(buf, sizeof(buf), "%d", min_raw / divisor);
-        canvas_draw_str(canvas, 110, 60, buf);
-    } else { // 24h режим: только min и max сверху
-        snprintf(buf, sizeof(buf), "%d", min_raw / divisor);
-        canvas_draw_str(canvas, 2, 10, buf);
-
-        snprintf(buf, sizeof(buf), "%d", max_raw / divisor);
-
-        uint8_t w = canvas_string_width(canvas, buf);
-        canvas_draw_str(canvas, 126 - w, 10, buf);
-    }
-
-    if(title) {
-        if(show_current)
-            canvas_draw_str(canvas, 2, 10, title);
-        else
-            canvas_draw_str(canvas, 58, 10, title);
-    }
-
-    int step = (count == 24) ? 5 : 7;
-    int x = 5;
-
-    int graph_height = show_current ? 50 : 36;
-    int graph_bottom = 63;
-
-    for(size_t i = 0; i < count; i++) {
-        int height = ((data[i] - min_raw) * graph_height) / range + 2;
-
-        canvas_draw_box(canvas, x, graph_bottom - height, 5, height);
-
-        x += step;
-    }
-}
-
-static void draw_temp_graph_callback(Canvas* canvas, void* model) {
-    PredictorModel* m = model;
-
-    canvas_clear(canvas);
-
-    if(m->history->graph_interval == GraphInterval1H) {
-        draw_bar_graph(canvas, m->history->temperature_1h, 15, m->temperature, 10, "1h", true);
-    } else {
-        draw_bar_graph(canvas, m->history->temperature_day, 24, m->temperature, 10, "24h", false);
-    }
-}
-
-static void draw_pressure_graph_callback(Canvas* canvas, void* model) {
-    PredictorModel* m = model;
-
-    canvas_clear(canvas);
-
-    if(m->history->graph_interval == GraphInterval1H) {
-        draw_bar_graph(canvas, m->history->pressure_1h, 15, m->pressure, 1, "1h", true);
-    } else {
-        draw_bar_graph(canvas, m->history->pressure_day, 24, m->pressure, 1, "24h", false);
-    }
-}
-
-static void draw_humidity_graph_callback(Canvas* canvas, void* model) {
-    PredictorModel* m = model;
-
-    canvas_clear(canvas);
-
-    if(m->history->graph_interval == GraphInterval1H) {
-        draw_bar_graph(canvas, m->history->humidity_1h, 15, m->humidity, 1, "1h", true);
-    } else {
-        draw_bar_graph(canvas, m->history->humidity_day, 24, m->humidity, 1, "24h", false);
-    }
 }
 
 static void main_view_timer_callback(void* context) {
@@ -336,147 +122,15 @@ static void predictor_update_all_models(PredictorApp* app, const SensorData* dat
         true);
 }
 
-static void get_average_readings(void* context, int* averageT, int* averageP, int* averageH) {
-    PredictorApp* app = context;
-
-    for(int i = 0; i < LIST_SIZE; i++) {
-        *averageT += app->history->temperature_1h[i];
-        *averageP += app->history->pressure_1h[i];
-        *averageH += app->history->humidity_1h[i];
-    }
-
-    *averageT /= LIST_SIZE;
-    *averageP /= LIST_SIZE;
-    *averageH /= LIST_SIZE;
-}
-
-static void refresh_3h_arrays(void* context) {
-    PredictorApp* app = context;
-
-    // Сдвиг истории на 1 элемент вправо
-    for(int i = 2; i > 0; i--) {
-        app->history->temperature_3h[i] = app->history->temperature_3h[i - 1];
-
-        app->history->pressure_3h[i] = app->history->pressure_3h[i - 1];
-
-        app->history->humidity_3h[i] = app->history->humidity_3h[i - 1];
-    }
-
-    int averageT = 0;
-    int averageP = 0;
-    int averageH = 0;
-
-    get_average_readings(app, &averageT, &averageP, &averageH);
-
-    // Новое значение всегда в начало массива
-    app->history->temperature_3h[0] = averageT;
-    app->history->pressure_3h[0] = averageP;
-    app->history->humidity_3h[0] = averageH;
-
-    // Счётчик заполнения истории
-    if(app->history->hour_index < 3) {
-        app->history->hour_index++;
-    }
-}
-
-static void refresh_day_arrays(void* context) {
-    PredictorApp* app = context;
-
-    for(int i = 0; i < 23; i++) {
-        app->history->temperature_day[i] = app->history->temperature_day[i + 1];
-        app->history->pressure_day[i] = app->history->pressure_day[i + 1];
-        app->history->humidity_day[i] = app->history->humidity_day[i + 1];
-    }
-
-    int averageT = 0;
-    int averageP = 0;
-    int averageH = 0;
-
-    get_average_readings(app, &averageT, &averageP, &averageH);
-
-    app->history->temperature_day[23] = averageT;
-    app->history->pressure_day[23] = averageP;
-    app->history->humidity_day[23] = averageH;
-}
-
-static void get_prediction(void* context) {
-    PredictorApp* app = context;
-
-    char buf[256];
-
-    if(app->history->hour_index < 3) {
-        snprintf(
-            buf,
-            sizeof(buf),
-            "Wait %d hours for prediction, please.",
-            3 - app->history->hour_index);
-
-    } else {
-        int dp1, dp2, dp3, accP, dh, trendH, dt;
-        int p0, p1, p2, p3, h0, h3, t0, t3;
-        int rainScore;
-
-        p0 = app->history->pressure;
-        p1 = app->history->pressure_3h[0];
-        p2 = app->history->pressure_3h[1];
-        p3 = app->history->pressure_3h[2];
-
-        h0 = app->history->humidity;
-        h3 = app->history->humidity_3h[2];
-
-        t0 = app->history->temperature;
-        t3 = app->history->temperature_3h[2];
-
-        dp1 = p0 - p1;
-        dp2 = p1 - p2;
-        dp3 = p2 - p3;
-
-        accP = (dp1 - dp2) + (dp2 - dp3);
-
-        dh = h0 - h3;
-        trendH = (h0 - h3) / 3;
-
-        dt = t0 - t3;
-
-        if(dt < 0) dt *= -1;
-
-        rainScore = (-dp1 * 4) + (-accP * 3) + (dh * 2) + (trendH * 1.5) + (dt * 0.5);
-
-        if(rainScore < 0) rainScore = 0;
-        if(rainScore > 100) rainScore = 100;
-
-        if(rainScore >= 0 && rainScore <= 20)
-            snprintf(buf, sizeof(buf), "Clear weather is expected.");
-
-        if(rainScore > 20 && rainScore <= 40)
-            snprintf(buf, sizeof(buf), "Cloudy weather is expected.");
-
-        if(rainScore > 40 && rainScore <= 65) snprintf(buf, sizeof(buf), "Rain is possible.");
-
-        if(rainScore > 65 && rainScore <= 85) snprintf(buf, sizeof(buf), "It should rain now.");
-
-        if(rainScore > 85) snprintf(buf, sizeof(buf), "Heavy rain/storm expected.");
-    }
-
-    strncpy(app->prediction_text, buf, sizeof(app->prediction_text) - 1);
-    app->prediction_text[sizeof(app->prediction_text) - 1] = '\0';
-
-    text_box_set_text(app->prediction_textbox, app->prediction_text);
-}
-
 static bool predictor_custom_event_callback(uint32_t event, void* context) {
     PredictorApp* app = context;
 
     SensorData data;
+    sensors_read(&data);
 
-    int32_t temp, press;
-    int rh;
-
-    bme280_read(&temp, &press, &rh);
-
-    data.temperature = temp;
-    data.pressure = press / 133.3;
-    data.humidity = rh;
+    data.temperature = data.temperature;
+    data.pressure = data.pressure;
+    data.humidity = data.humidity;
 
     switch(event) {
     case TimeEventRedraw:
@@ -495,10 +149,12 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
         return true;
 
     case HistoryEvent:
-        refresh_day_arrays(app);
+        history_refresh_day(app->history);
 
-        refresh_3h_arrays(app);
-        get_prediction(app);
+        history_refresh_3h(app->history);
+
+        weather_prediction_get(app->history, app->prediction_text, 256);
+        text_box_set_text(app->prediction_textbox, app->prediction_text);
 
         return true;
 
@@ -537,6 +193,7 @@ static bool predictor_input_callback(InputEvent* event, void* context) {
     }
 
     if(event->key == InputKeyUp) {
+        app->selected_view_index = 0;
         view_dispatcher_switch_to_view(app->view_dispatcher, PredictionTextBoxView);
 
         return true;
@@ -595,19 +252,19 @@ static PredictorApp* predictor_app_alloc(void) {
 
     view_allocate_model(app->humidity_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
 
-    int32_t temp, press;
-    int rh;
-    bme280_read(&temp, &press, &rh);
+    SensorData data;
+    sensors_read(&data);
 
     app->history = calloc(1, sizeof(PredictorHistory));
+    history_load(app->history);
 
     with_view_model(
         app->main_view,
         PredictorModel * model,
         {
-            model->temperature = temp;
-            model->pressure = (int)(press / 133.3);
-            model->humidity = rh;
+            model->temperature = data.temperature;
+            model->pressure = data.pressure;
+            model->humidity = data.humidity;
             model->history = app->history;
         },
         false);
