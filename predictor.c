@@ -7,10 +7,9 @@
 #include <gui/view_dispatcher.h>
 #include <gui/modules/text_box.h>
 
-#include "bme280/bme280.h"
-#include "utils/utils.h"
-#include "history/history.h"
 #include "sensors/sensors.h"
+#include "sensors/co2.h"
+#include "history/history.h"
 #include "graph/graph.h"
 #include "prediction/prediction.h"
 
@@ -220,8 +219,8 @@ static PredictorApp* predictor_app_alloc(void) {
 
     Gui* gui = furi_record_open(RECORD_GUI);
 
-    if(!bme280_init()) {
-        FURI_LOG_E(TAG, "BME280 init failed");
+    if(!sensors_init()) {
+        FURI_LOG_E(TAG, "Sensors init failed");
     }
 
     app->view_dispatcher = view_dispatcher_alloc();
@@ -344,6 +343,8 @@ static void predictor_app_free(PredictorApp* app) {
 
     furi_timer_stop(app->history_timer);
     furi_timer_free(app->history_timer);
+
+    co2_deinit();
 
     view_dispatcher_remove_view(app->view_dispatcher, MainView);
     view_dispatcher_remove_view(app->view_dispatcher, TempGraphView);

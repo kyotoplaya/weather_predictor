@@ -29,6 +29,6 @@ void draw_main_callback(Canvas* canvas, void* model) {
     snprintf(buf, sizeof(buf), "%d %%", m->humidity);
     canvas_draw_str(canvas, 102, 42, buf);
 
-    // Временное решение ввиду отсутствия датчика CO2
-    canvas_draw_str(canvas, 80, 56, "407 ppm");
+    snprintf(buf, sizeof(buf), "%d ppm", m->co2);
+    canvas_draw_str(canvas, 80, 56, buf);
 }

@@ -7,6 +7,7 @@ typedef struct {
     int temperature;
     int pressure;
     int humidity;
+    int co2;
 
     PredictorHistory* history;
 } PredictorModel;
