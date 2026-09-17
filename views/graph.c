@@ -37,3 +37,16 @@ void draw_humidity_graph_callback(Canvas* canvas, void* model) {
         graph_draw_bar(canvas, m->history->humidity_day, 100, 24, 1, "24h");
     }
 }
+
+void draw_co2_graph_callback(Canvas* canvas, void* model) {
+    PredictorModel* m = model;
+
+    canvas_clear(canvas);
+
+    /* CO2 меняется от ~330 до ~5000 ppm — рисуем с автошкалой (range=0) */
+    if(m->history->graph_interval == GraphInterval1H) {
+        graph_draw_bar(canvas, m->history->co2_1h, 0, 15, 1, "1h");
+    } else {
+        graph_draw_bar(canvas, m->history->co2_day, 0, 24, 1, "24h");
+    }
+}

@@ -8,7 +8,7 @@
 #include <gui/modules/text_box.h>
 
 #include "sensors/sensors.h"
-#include "sensors/co2.h"
+#include "co2/co2.h"
 #include "history/history.h"
 #include "graph/graph.h"
 #include "prediction/prediction.h"
@@ -23,6 +23,7 @@ typedef enum {
     TempGraphView,
     PressureGraphView,
     HumidityGraphView,
+    Co2GraphView,
     PredictorViewCount, // Не менять индекс данной строки в enum для корректной работы кругового меню
 
     PredictionTextBoxView,
@@ -43,6 +44,7 @@ typedef struct {
     View* temp_graph_view;
     View* pressure_graph_view;
     View* humidity_graph_view;
+    View* co2_graph_view;
 
     TextBox* prediction_textbox;
 
@@ -119,6 +121,12 @@ static void predictor_update_all_models(PredictorApp* app, const SensorData* dat
         PredictorModel * model,
         { predictor_model_update(model, data); },
         true);
+
+    with_view_model(
+        app->co2_graph_view,
+        PredictorModel * model,
+        { predictor_model_update(model, data); },
+        true);
 }
 
 static bool predictor_custom_event_callback(uint32_t event, void* context) {
@@ -141,7 +149,8 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
         return true;
 
     case BMEEventRedraw:
-        history_push(app->history, data.temperature, data.pressure, data.humidity);
+        history_push(
+            app->history, data.temperature, data.pressure, data.humidity, data.co2);
 
         predictor_update_all_models(app, &data);
 
@@ -163,6 +172,7 @@ static bool predictor_custom_event_callback(uint32_t event, void* context) {
             app->pressure_graph_view, PredictorModel * model, { UNUSED(model); }, true);
         with_view_model(
             app->humidity_graph_view, PredictorModel * model, { UNUSED(model); }, true);
+        with_view_model(app->co2_graph_view, PredictorModel * model, { UNUSED(model); }, true);
 
         return true;
     }
@@ -233,6 +243,7 @@ static PredictorApp* predictor_app_alloc(void) {
     app->temp_graph_view = view_alloc();
     app->pressure_graph_view = view_alloc();
     app->humidity_graph_view = view_alloc();
+    app->co2_graph_view = view_alloc();
 
     app->prediction_textbox = text_box_alloc();
     text_box_set_text(app->prediction_textbox, "Wait 3 hours for prediction, please.");
@@ -241,6 +252,7 @@ static PredictorApp* predictor_app_alloc(void) {
     view_set_context(app->temp_graph_view, app);
     view_set_context(app->pressure_graph_view, app);
     view_set_context(app->humidity_graph_view, app);
+    view_set_context(app->co2_graph_view, app);
 
     // Аллоцируем модели
     view_allocate_model(app->main_view, ViewModelTypeLockFree, sizeof(PredictorModel));
@@ -250,6 +262,8 @@ static PredictorApp* predictor_app_alloc(void) {
     view_allocate_model(app->pressure_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
 
     view_allocate_model(app->humidity_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
+
+    view_allocate_model(app->co2_graph_view, ViewModelTypeLockFree, sizeof(PredictorModel));
 
     SensorData data;
     sensors_read(&data);
@@ -264,6 +278,7 @@ static PredictorApp* predictor_app_alloc(void) {
             model->temperature = data.temperature;
             model->pressure = data.pressure;
             model->humidity = data.humidity;
+            model->co2 = data.co2;
             model->history = app->history;
         },
         false);
@@ -286,20 +301,29 @@ static PredictorApp* predictor_app_alloc(void) {
         { predictor_model_init(model, app->history); },
         false);
 
+    with_view_model(
+        app->co2_graph_view,
+        PredictorModel * model,
+        { predictor_model_init(model, app->history); },
+        false);
+
     view_set_draw_callback(app->main_view, draw_main_callback);
     view_set_draw_callback(app->temp_graph_view, draw_temp_graph_callback);
     view_set_draw_callback(app->pressure_graph_view, draw_pressure_graph_callback);
     view_set_draw_callback(app->humidity_graph_view, draw_humidity_graph_callback);
+    view_set_draw_callback(app->co2_graph_view, draw_co2_graph_callback);
 
     view_set_input_callback(app->main_view, predictor_input_callback);
     view_set_input_callback(app->temp_graph_view, predictor_input_callback);
     view_set_input_callback(app->pressure_graph_view, predictor_input_callback);
     view_set_input_callback(app->humidity_graph_view, predictor_input_callback);
+    view_set_input_callback(app->co2_graph_view, predictor_input_callback);
 
     view_set_previous_callback(app->main_view, predictor_exit_navigation_callback);
     view_set_previous_callback(app->temp_graph_view, predictor_back_to_main_callback);
     view_set_previous_callback(app->pressure_graph_view, predictor_back_to_main_callback);
     view_set_previous_callback(app->humidity_graph_view, predictor_back_to_main_callback);
+    view_set_previous_callback(app->co2_graph_view, predictor_back_to_main_callback);
     view_set_previous_callback(
         text_box_get_view(app->prediction_textbox), predictor_back_to_main_callback);
 
@@ -307,11 +331,13 @@ static PredictorApp* predictor_app_alloc(void) {
     view_set_custom_callback(app->temp_graph_view, predictor_custom_event_callback);
     view_set_custom_callback(app->pressure_graph_view, predictor_custom_event_callback);
     view_set_custom_callback(app->humidity_graph_view, predictor_custom_event_callback);
+    view_set_custom_callback(app->co2_graph_view, predictor_custom_event_callback);
 
     view_dispatcher_add_view(app->view_dispatcher, MainView, app->main_view);
     view_dispatcher_add_view(app->view_dispatcher, TempGraphView, app->temp_graph_view);
     view_dispatcher_add_view(app->view_dispatcher, PressureGraphView, app->pressure_graph_view);
     view_dispatcher_add_view(app->view_dispatcher, HumidityGraphView, app->humidity_graph_view);
+    view_dispatcher_add_view(app->view_dispatcher, Co2GraphView, app->co2_graph_view);
 
     view_dispatcher_add_view(
         app->view_dispatcher, PredictionTextBoxView, text_box_get_view(app->prediction_textbox));
@@ -323,9 +349,9 @@ static PredictorApp* predictor_app_alloc(void) {
     app->history->hour_index = 0;
     app->history->graph_interval = GraphInterval1H;
 
-    furi_timer_start(app->main_view_timer, furi_ms_to_ticks(60000)); // минута
-    furi_timer_start(app->graph_timer, furi_ms_to_ticks(2000)); // 4 минуты
-    furi_timer_start(app->history_timer, furi_ms_to_ticks(2000)); // час
+    furi_timer_start(app->main_view_timer, furi_ms_to_ticks(60 * 1000)); // обновление экрана — 1 минута
+    furi_timer_start(app->graph_timer, furi_ms_to_ticks(4 * 60 * 1000)); // сэмпл в историю — раз в 4 минуты (15 точек = 1 час)
+    furi_timer_start(app->history_timer, furi_ms_to_ticks(60 * 60 * 1000)); // агрегаты 3ч/24ч — раз в час
 
     app->selected_view_index = 0;
 
@@ -350,6 +376,7 @@ static void predictor_app_free(PredictorApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, TempGraphView);
     view_dispatcher_remove_view(app->view_dispatcher, PressureGraphView);
     view_dispatcher_remove_view(app->view_dispatcher, HumidityGraphView);
+    view_dispatcher_remove_view(app->view_dispatcher, Co2GraphView);
     view_dispatcher_remove_view(app->view_dispatcher, PredictionTextBoxView);
 
     text_box_free(app->prediction_textbox);
@@ -358,6 +385,7 @@ static void predictor_app_free(PredictorApp* app) {
     view_free(app->temp_graph_view);
     view_free(app->pressure_graph_view);
     view_free(app->humidity_graph_view);
+    view_free(app->co2_graph_view);
 
     free(app->history);
 

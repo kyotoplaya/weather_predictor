@@ -10,7 +10,7 @@ void predictor_model_init(PredictorModel* model, PredictorHistory* history) {
     model->co2 = data.co2;
     model->history = history;
 
-    history_init(history, data.temperature, data.pressure, data.humidity);
+    history_init(history, data.temperature, data.pressure, data.humidity, data.co2);
 }
 
 void predictor_model_update(PredictorModel* model, const SensorData* data) {

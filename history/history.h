@@ -17,29 +17,48 @@ typedef struct {
     int temperature;
     int pressure;
     int humidity;
+    int co2;
 
     int temperature_1h[HISTORY_1H_SIZE];
     int pressure_1h[HISTORY_1H_SIZE];
     int humidity_1h[HISTORY_1H_SIZE];
+    int co2_1h[HISTORY_1H_SIZE];
 
     int temperature_3h[HISTORY_3H_SIZE];
     int pressure_3h[HISTORY_3H_SIZE];
     int humidity_3h[HISTORY_3H_SIZE];
+    int co2_3h[HISTORY_3H_SIZE];
 
     int temperature_day[HISTORY_DAY_SIZE];
     int pressure_day[HISTORY_DAY_SIZE];
     int humidity_day[HISTORY_DAY_SIZE];
+    int co2_day[HISTORY_DAY_SIZE];
 
     int8_t hour_index;
 
     GraphInterval graph_interval;
 } PredictorHistory;
 
-void history_init(PredictorHistory* history, int temperature, int pressure, int humidity);
+void history_init(
+    PredictorHistory* history,
+    int temperature,
+    int pressure,
+    int humidity,
+    int co2);
 
-void history_push(PredictorHistory* history, int temperature, int pressure, int humidity);
+void history_push(
+    PredictorHistory* history,
+    int temperature,
+    int pressure,
+    int humidity,
+    int co2);
 
-void history_get_average(PredictorHistory* history, int* averageT, int* averageP, int* averageH);
+void history_get_average(
+    PredictorHistory* history,
+    int* averageT,
+    int* averageP,
+    int* averageH,
+    int* averageC);
 
 void history_refresh_3h(PredictorHistory* history);
 

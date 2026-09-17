@@ -2,7 +2,7 @@
 
 #include "sensors.h"
 #include "../bme280/bme280.h"
-#include "co2.h"
+#include "../co2/co2.h"
 
 #define CO2_REFRESH_MS 10000
 

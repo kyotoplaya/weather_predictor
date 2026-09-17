@@ -11,10 +11,6 @@
 
 #define CO2_BAUD 9600
 
-/* временно: разовая калибровка нуля (0x87) на первом чтении при старте.
-   ДЕЛАТЬ ТОЛЬКО НА СВЕЖЕМ ВОЗДУХЕ. После теста вернуть в 0. */
-#define CO2_DIAG_CAL_ON_START 0
-
 #define CO2_RX_BUF_SIZE 64
 #define CO2_FRAME_SIZE    16
 #define CO2_TIMEOUT_MS    1400 /* датчик сам шлёт кадр ~раз в секунду */
@@ -24,18 +20,8 @@
    Калибровка предположительная; при наличии известного газа/эталона поправить. */
 #define CO2_RAW_OFFSET 3280
 
-/* Собственный auto-report кадр этого датчика (наблюдается на 9600, без команд):
- *   42 4D | CO2_hi CO2_lo | ... | CRC
- *   CRC = (сумма байтов 0..14) & 0xFF
- *   CO2 big-endian в байтах 2..3 */
 #define CO2_HDR0 0x42
 #define CO2_HDR1 0x4D
-
-/* zero calibration: FF 01 87 00 00 00 00 00 78 */
-#define CO2_ZERO_CAL_CMD_SIZE 9
-static const uint8_t co2_zero_cal_cmd[CO2_ZERO_CAL_CMD_SIZE] = {
-    0xFF, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78,
-};
 
 typedef struct {
     uint8_t buf[CO2_RX_BUF_SIZE];
@@ -86,8 +72,8 @@ static void co2_uart_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent eve
 }
 
 /* Ищем в буфере валидный auto-report кадр 42 4D ... ; возвращаем сырое поле [6:7]
-   (растёт с концентрацией CO2) или -1. out_idx (опционально) — смещение кадра. */
-static int co2_parse_frame(const uint8_t* buf, size_t len, size_t* out_idx) {
+   (растёт с концентрацией CO2) или -1. */
+static int co2_parse_frame(const uint8_t* buf, size_t len) {
     for(size_t i = 0; i + CO2_FRAME_SIZE <= len; i++) {
         if(buf[i] != CO2_HDR0 || buf[i + 1] != CO2_HDR1) {
             continue;
@@ -102,23 +88,10 @@ static int co2_parse_frame(const uint8_t* buf, size_t len, size_t* out_idx) {
             continue;
         }
 
-        if(out_idx) {
-            *out_idx = i;
-        }
-
         return (buf[i + 6] << 8) | buf[i + 7];
     }
 
     return -1;
-}
-
-/* диагностика: печатаем все 16 байт кадра, чтобы найти поле, растущее при выдохе */
-static void co2_log_frame(const uint8_t* frame) {
-    char hex[64];
-    for(size_t k = 0; k < CO2_FRAME_SIZE; k++) {
-        snprintf(hex + k * 3, sizeof(hex) - k * 3, "%02X ", frame[k]);
-    }
-    FURI_LOG_E(TAG, "frame: %s", hex);
 }
 
 static void co2_log_raw(const uint8_t* buf, size_t len) {
@@ -173,27 +146,9 @@ void co2_deinit(void) {
 }
 
 /* Пассивное чтение: ждём очередной auto-report кадр, команд не шлём. */
-static bool co2_diag_cal_done = false;
-
-void co2_calibrate_zero(void) {
-    if(!co2_serial) {
-        return;
-    }
-
-    co2_rx_flush();
-    furi_hal_serial_tx(co2_serial, co2_zero_cal_cmd, sizeof(co2_zero_cal_cmd));
-    furi_hal_serial_tx_wait_complete(co2_serial);
-    FURI_LOG_E(TAG, "zero-cal sent (0x87)");
-}
-
 bool co2_read(int* ppm) {
     if(!co2_serial || !ppm) {
         return false;
-    }
-
-    if(CO2_DIAG_CAL_ON_START && !co2_diag_cal_done) {
-        co2_diag_cal_done = true;
-        co2_calibrate_zero();
     }
 
     co2_rx_flush();
@@ -213,16 +168,14 @@ bool co2_read(int* ppm) {
             }
             buf[len++] = byte;
 
-            size_t idx = 0;
-            int parsed = co2_parse_frame(buf, len, &idx);
+            int parsed = co2_parse_frame(buf, len);
             if(parsed >= 0) {
-                co2_log_frame(buf + idx);
                 int value = parsed - CO2_RAW_OFFSET;
                 if(value < 0) {
                     value = 0;
                 }
                 *ppm = value;
-                FURI_LOG_I(TAG, "ppm=%d (raw[67]=%d)", value, parsed);
+                FURI_LOG_I(TAG, "ppm=%d", value);
                 return true;
             }
         }
